@@ -1,0 +1,15 @@
+import java.time.DayOfWeek;
+import java.time.LocalDate;  
+class HelloWorld {
+    public static void main(String[] args) {
+        LocalDate today=LocalDate.now();
+        LocalDate monday = today;
+    while (monday.getDayOfWeek() != DayOfWeek.MONDAY)
+    {
+      monday = monday.minusDays(1);
+    }
+    System.out.println(monday);
+    LocalDate monthBegin = LocalDate.now().withDayOfMonth(1);
+    System.out.println(monthBegin);
+    }
+}
