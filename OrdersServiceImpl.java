@@ -11,6 +11,7 @@ import com.shippingadaptor.integration.ecommerce.shopify.param.OrderListParam;
 import com.shippingadaptor.integration.shippingcarrier.eshipper.models.*;
 import com.shippingadaptor.integration.shippingcarrier.eshipper.models.Box;
 import com.shippingadaptor.models.*;
+import com.shippingadaptor.orders.repository.OrderLineItemRepository;
 import com.shippingadaptor.orders.repository.OrdersRepository;
 import com.shippingadaptor.orders.service.OrdersService;
 import com.shippingadaptor.store.repository.MerchantStoreConnectionRepository;
@@ -18,12 +19,10 @@ import com.shippingadaptor.store.repository.MerchantStoreMetadataViewRepository;
 import com.shippingadaptor.store.repository.MerchantStoreViewRepository;
 import com.shippingadaptor.user.service.UserService;
 import com.shippingadaptor.utility.Constant;
-import com.shippingadaptor.utility.MessageKey;
 import org.modelmapper.ModelMapper;
 import org.modelmapper.TypeToken;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
-import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -31,7 +30,6 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
 
 /**
  * OrdersServiceImpl
@@ -60,6 +58,8 @@ public class OrdersServiceImpl implements OrdersService {
     @Autowired
     private MerchantStoreMetadataViewRepository merchantStoreMetadataViewRepository;
 
+    @Autowired
+    private OrderLineItemRepository orderLineItemRepository;
     @Autowired
     private BoxingService boxingService;
     /**
@@ -127,15 +127,14 @@ public class OrdersServiceImpl implements OrdersService {
 
                             Item item=modelMapper.map(lineItem,Item.class);
                             item.setHscode(inventoryItemResponse.getInventoryItem().getHarmonizedSystemCode().toString());
-                            item.setLength("4");
-                            item.setHeight("4");
-                            item.setWidth("4");
-                            item.setWeight("4");
-
+                            item.setLength("1");
+                            item.setHeight("1");
+                            item.setWidth("1");
+                            item.setWeight("1");
                             itemList.add(item);
 
                         }
-                        items.setItems(itemList);
+                        items.setItemList(itemList);
                         BoxingRequest boxingRequest = new BoxingRequest();
                         Boxes boxes = new Boxes();
 
@@ -152,9 +151,13 @@ public class OrdersServiceImpl implements OrdersService {
                         for(Box box:eShipper.getBoxingRequestReply().getPackedBoxes().getBoxes())
                         {
                             BoxingResult boxingResult=modelMapper.map(box,BoxingResult.class);
-                            boxingResult.setOrderLineItem(box.getItems());
-                            System.out.println("mapped");
+                            for(Item item:box.getItems().getItemList())
+                            {
+                                boxingResult.setOrderLineItem(orderLineItemRepository.findByName(item.getName()));
+                            }
+
                         }
+
 
                     }
                 }
