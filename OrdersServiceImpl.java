@@ -1,42 +1,37 @@
 package com.shippingadaptor.orders.service.impl;
 
+import com.shippingadaptor.boxing.service.BoxingService;
 import com.shippingadaptor.common.enums.MasterStoresEnum;
-import com.shippingadaptor.common.enums.OrdersTimeFilterEnum;
 import com.shippingadaptor.config.security.AuthenticationFacadeImpl;
-import com.shippingadaptor.dto.*;
+import com.shippingadaptor.dto.MerchantStoreConnectionDTO;
+import com.shippingadaptor.dto.MerchantStoreDTO;
 import com.shippingadaptor.integration.ecommerce.shipstation.model.ShipStation;
 import com.shippingadaptor.integration.ecommerce.shopify.model.*;
 import com.shippingadaptor.integration.ecommerce.shopify.param.OrderListParam;
+import com.shippingadaptor.integration.shippingcarrier.eshipper.models.*;
+import com.shippingadaptor.integration.shippingcarrier.eshipper.models.Box;
 import com.shippingadaptor.models.*;
-import com.shippingadaptor.orders.repository.OrderLineItemRepository;
-import com.shippingadaptor.orders.repository.OrderShippingAddressRepository;
-import com.shippingadaptor.orders.repository.OrderShippingLinesRepository;
 import com.shippingadaptor.orders.repository.OrdersRepository;
 import com.shippingadaptor.orders.service.OrdersService;
+import com.shippingadaptor.store.repository.MerchantStoreConnectionRepository;
 import com.shippingadaptor.store.repository.MerchantStoreMetadataViewRepository;
 import com.shippingadaptor.store.repository.MerchantStoreViewRepository;
 import com.shippingadaptor.user.service.UserService;
 import com.shippingadaptor.utility.Constant;
-import com.shippingadaptor.utility.DateUtility;
+import com.shippingadaptor.utility.MessageKey;
 import org.modelmapper.ModelMapper;
 import org.modelmapper.TypeToken;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.data.domain.PageRequest;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import javax.persistence.EntityManager;
-import javax.persistence.PersistenceContext;
-import javax.persistence.criteria.CriteriaBuilder;
-import javax.persistence.criteria.CriteriaQuery;
-import javax.persistence.criteria.Predicate;
-import javax.persistence.criteria.Root;
-import java.math.BigDecimal;
-import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * OrdersServiceImpl
@@ -60,20 +55,13 @@ public class OrdersServiceImpl implements OrdersService {
     private MerchantStoreViewRepository merchantStoreViewRepository;
 
     @Autowired
+    private MerchantStoreConnectionRepository merchantStoreConnectionRepository;
+
+    @Autowired
     private MerchantStoreMetadataViewRepository merchantStoreMetadataViewRepository;
 
     @Autowired
-    private OrderShippingAddressRepository orderShippingAddressRepository;
-
-    @Autowired
-    private OrderShippingLinesRepository orderShippingLinesRepository;
-
-    @Autowired
-    private OrderLineItemRepository orderLineItemRepository;
-
-    @PersistenceContext
-    private EntityManager entityManager;
-
+    private BoxingService boxingService;
     /**
      * importOrdersFromEcomPlatform
      */
@@ -106,11 +94,7 @@ public class OrdersServiceImpl implements OrdersService {
                 } else {
                     ordersList = ShopifyClient.builder().setApiCredentials(accessToken, storeURL).build().getOrderClient().listOrders(OrderListParam.builder().setSinceId(ecomPlatformOrderIds.get(0)).build());
                 }
-
                 Orders orders;
-                OrderShippingAddress orderShippingAddress;
-                OrderShippingLines orderShippingLines;
-                OrderLineItem orderLineItem;
                 if (ordersList.getOrders() != null && ordersList.getErrors() == null) {
                     for (Order shopifyOrder : ordersList.getOrders()) {
                         orders = modelMapper.map(shopifyOrder, new TypeToken<Orders>() {
@@ -132,56 +116,44 @@ public class OrdersServiceImpl implements OrdersService {
                         orders.setUpdatedOn(LocalDateTime.now());
                         orders.setUpdatedBy(systemUser);
 
-                        ordersRepository.save(orders);
+                        //ordersRepository.save(orders);
+                        Items items=new Items();
+                        List<Item> itemList = new ArrayList<>();
+                        ShopifyClient shopifyClient=ShopifyClient.builder().setApiCredentials(accessToken, storeURL).build();
+                        for(LineItem lineItem:shopifyOrder.getLineItems())
+                        {
+                            VariantResponse variantResponse = shopifyClient.getVariantClient().getVariant(lineItem.getVariantId());
+                            InventoryItemResponse inventoryItemResponse=shopifyClient.getInventoryItemClient().getInventoryItem(variantResponse.getVariant().getInventoryItemId());
 
-                        if (shopifyOrder.getShippingAddress() != null) {
-                            orderShippingAddress = modelMapper.map(shopifyOrder.getShippingAddress(), new TypeToken<OrderShippingAddress>() {
-                            }.getType());
+                            Item item=modelMapper.map(lineItem,Item.class);
+                            item.setHscode(inventoryItemResponse.getInventoryItem().getHarmonizedSystemCode().toString());
+                            item.setLength("4");
+                            item.setHeight("4");
+                            item.setWidth("4");
+                            item.setWeight("4");
 
-                            orderShippingAddress.setOrder(orders);
-                            orderShippingAddress.setCreatedOn(LocalDateTime.now());
-                            orderShippingAddress.setCreatedBy(systemUser);
-                            orderShippingAddress.setUpdatedOn(LocalDateTime.now());
-                            orderShippingAddress.setUpdatedBy(systemUser);
-
-                            orderShippingAddressRepository.save(orderShippingAddress);
-                        }
-
-                        if (shopifyOrder.getShippingLines() != null) {
-                            for (ShippingLine shippingLine : shopifyOrder.getShippingLines()) {
-                                orderShippingLines = modelMapper.map(shippingLine, new TypeToken<OrderShippingLines>() {
-                                }.getType());
-
-                                orderShippingLines.setOrder(orders);
-                                orderShippingLines.setCreatedOn(LocalDateTime.now());
-                                orderShippingLines.setCreatedBy(systemUser);
-                                orderShippingLines.setUpdatedOn(LocalDateTime.now());
-                                orderShippingLines.setUpdatedBy(systemUser);
-
-                                orderShippingLinesRepository.save(orderShippingLines);
-                            }
+                            itemList.add(item);
 
                         }
+                        items.setItems(itemList);
+                        BoxingRequest boxingRequest = new BoxingRequest();
+                        Boxes boxes = new Boxes();
 
-                        if (shopifyOrder.getLineItems() != null) {
-                            for (LineItem lineItem : shopifyOrder.getLineItems()) {
-                                orderLineItem = modelMapper.map(lineItem, new TypeToken<OrderLineItem>() {
-                                }.getType());
 
-                                orderLineItem.setOrder(orders);
-                                orderLineItem.setLineItemId(String.valueOf(lineItem.getId()));
-                                orderLineItem.setWeight(BigDecimal.valueOf(lineItem.getGrams()));
-                                if (orderLineItem.getSku() == null) {
-                                    orderLineItem.setSku("IPOD2008GREEN");
-                                }
-                                orderLineItem.setCreatedOn(LocalDateTime.now());
-                                orderLineItem.setCreatedBy(systemUser);
-                                orderLineItem.setUpdatedOn(LocalDateTime.now());
-                                orderLineItem.setUpdatedBy(systemUser);
+                        if (this.boxingService.existsByUser(this.userService.findUserByUserName(this.authenticationFacade.getUserName()))) {
+                            boxes.setBoxes(modelMapper.map(this.boxingService.findByUserAllBox(), new TypeToken<List<Box>>() {}.getType()));
+                            System.out.println("reached");
+                        }
 
-                                orderLineItemRepository.save(orderLineItem);
-                            }
+                        boxingRequest.setBoxes(boxes);
+                        boxingRequest.setItems(items);
 
+                        EShipper eShipper = EShipperClient.builder().setEShipperCredentials("rahul_test", "admint7102").build().getBoxingClient().listBoxing(boxingRequest);
+                        for(Box box:eShipper.getBoxingRequestReply().getPackedBoxes().getBoxes())
+                        {
+                            BoxingResult boxingResult=modelMapper.map(box,BoxingResult.class);
+                            boxingResult.setOrderLineItem(box.getItems());
+                            System.out.println("mapped");
                         }
 
                     }
@@ -190,58 +162,5 @@ public class OrdersServiceImpl implements OrdersService {
 
             }
         }
-    }
-
-    public OrdersReponseDTO getAllOrders(OrderSearchRequest orderSearchRequest) {
-
-        populateDates(orderSearchRequest);
-        CriteriaBuilder cb = entityManager.getCriteriaBuilder();
-        CriteriaQuery<Orders> cq = cb.createQuery(Orders.class);
-        Root<Orders> root = cq.from(Orders.class);
-        cq.select(root);
-        List<Predicate> predicateConditions = new ArrayList<>();
-        if (!orderSearchRequest.getFromDate().isEmpty() && orderSearchRequest.getToDate().isEmpty()) {
-            orderSearchRequest.setToDate(LocalDateTime.now().format(DateTimeFormatter.ofPattern(DateUtility.DATE_FORMAT_MMDDYYYY)));
-        }
-        if (!orderSearchRequest.getFromDate().isEmpty() && !orderSearchRequest.getToDate().isEmpty()) {
-            predicateConditions.add(new OrderSearchSpecification.OrderBetweenDate(orderSearchRequest.getFromLocalDate(), orderSearchRequest.getToLocalDate()).toPredicate(root, cq, cb));
-        }
-        if (!orderSearchRequest.getStoreMasterId().isEmpty()) {
-            predicateConditions.add(new OrderSearchSpecification.OrderHasStoreMaster(Long.parseLong(orderSearchRequest.getStoreMasterId())).toPredicate(root, cq, cb));
-        }
-        if (!orderSearchRequest.getMerchantStoreId().isEmpty()) {
-            predicateConditions.add(new OrderSearchSpecification.OrderHasStoreMaster(Long.parseLong(orderSearchRequest.getStoreMasterId())).toPredicate(root, cq, cb));
-        }
-        cq.where(predicateConditions.toArray(new Predicate[]{}));
-        List<Orders> ordersList = entityManager.createQuery(cq).getResultList();
-
-        OrdersReponseDTO ordersReponseDTO = new OrdersReponseDTO();
-        List<OrdersResultDTO> ordersResultDTOList = new ArrayList<>();
-        for (Orders orders : ordersList) {
-            OrdersResultDTO ordersResultDTO = modelMapper.map(orders, new TypeToken<OrdersResultDTO>() {
-            }.getType());
-            ordersResultDTO.setOrderShippingAddress(orderShippingAddressRepository.findByOrder(orders));
-            ordersResultDTO.setStoreName(orders.getMerchantStore().getStoreName());
-            ordersResultDTO.setMasterStoreName(orders.getStoreMaster().getStoreName());
-            ordersResultDTO.setShippingSource(orderShippingLinesRepository.findByOrder(orders, PageRequest.of(0, 1)).getContent().get(0).getSource());
-            ordersResultDTOList.add(ordersResultDTO);
-        }
-        ordersReponseDTO.setResult(ordersResultDTOList);
-        return ordersReponseDTO;
-    }
-
-    private void populateDates(OrderSearchRequest orderSearchRequest) {
-        if (orderSearchRequest.getTimeFilter().equals(OrdersTimeFilterEnum.ALL.getValue())) {
-            orderSearchRequest.setFromDate("");
-            orderSearchRequest.setToDate("");
-        } else if (orderSearchRequest.getTimeFilter().equals(OrdersTimeFilterEnum.TODAY.getValue())) {
-            orderSearchRequest.setFromDate(LocalDate.now().format(DateTimeFormatter.ofPattern(DateUtility.DATE_FORMAT_MMDDYYYY)));
-            orderSearchRequest.setToDate(LocalDate.now().format(DateTimeFormatter.ofPattern(DateUtility.DATE_FORMAT_MMDDYYYY)));
-        }
-        else if(orderSearchRequest.getTimeFilter().equals(OrdersTimeFilterEnum.THIS_WEEK.getValue()))
-        {
-
-        }
-
     }
 }
